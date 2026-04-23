@@ -1,121 +1,64 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const Groq = require('groq-sdk');
-const axios = require('axios');
-const { createCanvas, loadImage } = require('canvas');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Kullanıcı bazlı hafıza
 const userHistory = new Map();
 
-const SYSTEM_PROMPT = `Sen Beluga AI'sın. Türkçe konuşan samimi bir asistansın.
-Kurallar: En fazla 2-4 cümle yaz. Kısa ve net ol.
-Emoji kullan ama abartma. Kullanıcıya 'kral' diye hitap edebilirsin.
-Düşünme adımlarını asla yazma, direkt cevabı ver. Sadece Türkçe konuş.`;
+const SYSTEM_PROMPT = `Sen Beluga AI'sın. Samimi bir asistansın. 
+Kısa ve öz cevaplar ver. Kullanıcıya 'kral' diye hitap et.`;
 
-// Mühürleme (Watermark) Fonksiyonu
-async function watermarkedImage(pollinationsUrl) {
-    try {
-        // 1. Pollinations'tan görseli indir
-        const imageResponse = await axios.get(pollinationsUrl, { responseType: 'arraybuffer' });
-        const originalImage = await loadImage(imageResponse.data);
+bot.start((ctx) => ctx.reply('Selam kral! Beluga hazır. 🐋\n/foto yazarak resim çizebilirsin!'));
 
-        // 2. Canvas oluştur
-        const canvas = createCanvas(originalImage.width, originalImage.height);
-        const ctx = canvas.getContext('2d');
-
-        // 3. Orijinal görseli çiz
-        ctx.drawImage(originalImage, 0, 0);
-
-        // 4. Senin logonun PNG halini yükle
-        const logoImage = await loadImage('https://i.imgur.com/qHkqhlM.png'); 
-
-        // 5. Logo boyutu (Görselin %15'i kadar) ve konumu (Sağ Alt)
-        const logoWidth = originalImage.width * 0.15;
-        const logoHeight = (logoImage.height / logoImage.width) * logoWidth;
-        const xPos = originalImage.width - logoWidth - 30;
-        const yPos = originalImage.height - logoHeight - 30;
-
-        // 6. Logoyu çiz
-        ctx.drawImage(logoImage, xPos, yPos, logoWidth, logoHeight);
-
-        return canvas.toBuffer('image/png');
-    } catch (err) {
-        console.error("Mühürleme hatası:", err);
-        return null;
-    }
-}
-
-bot.start((ctx) => ctx.reply('Selam kral! Ben Beluga 🐋\nSohbet için yazabilir, fotoğraf için /foto komutunu kullanabilirsin.'));
-
-bot.command('reset', (ctx) => {
-    userHistory.delete(ctx.from.id);
-    ctx.reply('Hafıza sıfırlandı kral, temiz bir sayfa açtık! 🐋');
-});
-
-// Fotoğraf Oluşturma Komutu
 bot.command('foto', async (ctx) => {
     const prompt = ctx.message.text.split(' ').slice(1).join(' ');
-    
-    if (!prompt) {
-        return ctx.reply('Kral, ne çizmemi istersin? Örnek: /foto karda oynayan beluga');
-    }
+    if (!prompt) return ctx.reply('Kral, ne çizelim? Örnek: /foto karda oynayan balina');
 
     try {
         await ctx.sendChatAction('upload_photo');
         
-        // Pollinations URL (nologo=true diyerek onların logosunu kaldırıyoruz)
-        const pollinationsUrl = `https://pollinations.ai/p/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`;
+        // Pollinations URL - nologo=true ile onların logosunu siliyoruz
+        const photoUrl = `https://pollinations.ai/p/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
         
-        const imageBuffer = await watermarkedImage(pollinationsUrl);
-
-        if (imageBuffer) {
-            await ctx.replyWithPhoto({ source: imageBuffer }, { caption: `Beluga AI Özel Üretim: "${prompt}" 🎨🐋` });
-        } else {
-            // Mühürleme başarısız olursa orijinali gönder
-            await ctx.replyWithPhoto(pollinationsUrl, { caption: `Mühürlenemedi ama çizdim: "${prompt}"` });
-        }
-    } catch (error) {
-        ctx.reply('Şu an çizim yapamıyorum kral, fırçalarım kurumuş. 😔');
+        // Resmi gönderirken altına senin mühür yazını ekliyoruz
+        await ctx.replyWithPhoto(photoUrl, { 
+            caption: `🎨 "${prompt}"\n\n✨ Beluga AI Özel Üretim 🐋` 
+        });
+    } catch (e) {
+        ctx.reply('Çizim motoru ısındı kral, biraz bekle.');
     }
 });
 
-// Normal Sohbet Akışı
+bot.command('reset', (ctx) => {
+    userHistory.delete(ctx.from.id);
+    ctx.reply('Hafıza sıfırlandı kral! 🐋');
+});
+
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
-    const userMessage = ctx.message.text;
-
     if (!userHistory.has(userId)) userHistory.set(userId, []);
     const history = userHistory.get(userId);
 
     try {
         await ctx.sendChatAction('typing');
-        history.push({ role: "user", content: userMessage });
+        history.push({ role: "user", content: ctx.message.text });
 
         const completion = await groq.chat.completions.create({
-            messages: [{ role: "system", content: SYSTEM_PROMPT }, ...history.slice(-8)],
+            messages: [{ role: "system", content: SYSTEM_PROMPT }, ...history.slice(-6)],
             model: "llama-3.3-70b-versatile",
-            temperature: 0.6,
-            max_tokens: 512,
+            temperature: 0.7,
         });
 
-        let aiResponse = completion.choices[0].message.content;
-        aiResponse = aiResponse.replace(/<(think|thought|reasoning)>[\s\S]*?<\/\1>/gi, '').trim();
-
-        if (aiResponse) {
-            history.push({ role: "assistant", content: aiResponse });
-            if (history.length > 16) history.splice(0, 2);
-            await ctx.reply(aiResponse);
-        }
-    } catch (error) {
-        console.error("Hata:", error.message);
-        ctx.reply("Ufak bir sorun çıktı kral, /reset yazıp düzeltebilirsin.");
+        let res = completion.choices[0].message.content.replace(/<(think|thought)>[\s\S]*?<\/\1>/gi, '').trim();
+        history.push({ role: "assistant", content: res });
+        
+        if (history.length > 12) history.splice(0, 2);
+        await ctx.reply(res);
+    } catch (err) {
+        ctx.reply('Kral bi takılma oldu, /reset yaz düzelir.');
     }
 });
 
-bot.launch().then(() => console.log("Beluga AI (Llama 3.3 + Photo Mode) Aktif! 🐋🚀"));
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+bot.launch().then(() => console.log("Beluga Online! 🐋"));
