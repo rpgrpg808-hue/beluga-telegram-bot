@@ -5,7 +5,7 @@ const Groq = require('groq-sdk');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Kullanıcı bazlı hafıza
+// Kullanıcı bazlı hafıza Map'i
 const userHistory = new Map();
 
 const SYSTEM_PROMPT = `Sen Beluga AI'sın. Türkçe konuşan samimi bir asistansın.
@@ -34,28 +34,32 @@ bot.on('text', async (ctx) => {
     try {
         await ctx.sendChatAction('typing');
 
+        // Kullanıcı mesajını hafızaya ekle
         history.push({ role: "user", content: userMessage });
 
-        const messagesToSend = [
-            { role: "system", content: SYSTEM_PROMPT },
-            ...history.slice(-8)
-        ];
-
+        // Groq Maverick modeline istek at
         const completion = await groq.chat.completions.create({
-            messages: messagesToSend,
-            model: "qwen/qwen3-32b",
-            temperature: 0.6, // Döngüye girmemesi için biraz yükselttik
-            max_tokens: 1000, // API'nin şişmesini engellemek için sınır koyduk
+            messages: [
+                { role: "system", content: SYSTEM_PROMPT },
+                ...history.slice(-8) // Son 8 mesajı gönder
+            ],
+            model: "llama-4-maverick-17b-128e-instruct", 
+            temperature: 0.7,
+            max_tokens: 1024,
         });
 
         let aiResponse = completion.choices[0].message.content;
 
-        // <think> etiketlerini ve içindekileri temizle
-        aiResponse = aiResponse.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        // Her ihtimale karşı temizlik (Maverick'te pek gerekmez ama sağlam olsun)
+        aiResponse = aiResponse.replace(/<(think|thought|reasoning)>[\s\S]*?<\/\1>/gi, '');
+        aiResponse = aiResponse.replace(/<(think|thought|reasoning)>[\s\S]*/gi, '');
+        aiResponse = aiResponse.trim();
 
         if (aiResponse) {
+            // Asistan cevabını hafızaya ekle
             history.push({ role: "assistant", content: aiResponse });
             
+            // 20 mesajı geçerse en eski ikiliyi sil
             if (history.length > 20) {
                 history.splice(0, 2);
             }
@@ -63,18 +67,17 @@ bot.on('text', async (ctx) => {
             await ctx.reply(aiResponse);
         }
     } catch (error) {
-        // Hatayı terminalde detaylı görmek için:
-        console.error("DETAYLI HATA:", error.message);
+        console.error("HATA:", error.message);
         
-        if (error.message.includes("rate_limit")) {
-            await ctx.reply("Çok hızlısın kral, biraz bekle limit doldu. 🐋");
+        if (error.message.includes("429")) {
+            await ctx.reply("Çok hızlısın kral, Maverick bile yetişemedi! Biraz bekle. 🐋");
         } else {
-            await ctx.reply("Bir hata oluştu kral, hafızayı /reset ile sıfırlayıp tekrar dene.");
+            await ctx.reply("Bir hata oldu kral, /reset yazıp temiz bir sayfa açalım mı?");
         }
     }
 });
 
-bot.launch().then(() => console.log("Beluga AI (Hafızalı & Optimize) yayında! 🐋"));
+bot.launch().then(() => console.log("Beluga AI (Maverick Edition) yayında! 🐋🚀"));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
