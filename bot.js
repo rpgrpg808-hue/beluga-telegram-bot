@@ -5,21 +5,20 @@ const Groq = require('groq-sdk');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Kullanıcı bazlı hafıza Map'i
+// Kullanıcı bazlı hafıza
 const userHistory = new Map();
 
 const SYSTEM_PROMPT = `Sen Beluga AI'sın. Türkçe konuşan samimi bir asistansın.
-Kurallar: 2-4 cümle yaz. Kısa ve net ol. Kelimeler arası boşluk bırak.
+Kurallar: En fazla 2-4 cümle yaz. Kısa ve net ol.
 Emoji kullan ama abartma. Kullanıcıya 'kral' diye hitap edebilirsin.
-Ciddi konularda: kod, hata, güvenlik, finans, sağlık -> net ve profesyonel ol.
-Düşünme adımlarını yazma, direkt cevabı ver. Sadece Türkçe konuş.`;
+Düşünme adımlarını asla yazma, direkt cevabı ver. Sadece Türkçe konuş.`;
 
-bot.start((ctx) => ctx.reply('Selam kral! Ben Beluga 🐋\nSohbet için direkt yaz.'));
+bot.start((ctx) => ctx.reply('Selam kral! Ben Beluga 🐋\nSohbet için direkt yazabilirsin.'));
 
 // Hafıza sıfırlama komutu
 bot.command('reset', (ctx) => {
     userHistory.delete(ctx.from.id);
-    ctx.reply('Hafıza sıfırlandı kral 🐋');
+    ctx.reply('Hafıza sıfırlandı kral, temiz bir sayfa açtık! 🐋');
 });
 
 bot.on('text', async (ctx) => {
@@ -34,32 +33,29 @@ bot.on('text', async (ctx) => {
     try {
         await ctx.sendChatAction('typing');
 
-        // Kullanıcı mesajını hafızaya ekle
         history.push({ role: "user", content: userMessage });
 
-        // Groq Maverick modeline istek at
+        // Kesin çalışan Llama 3.3 70B modeli
         const completion = await groq.chat.completions.create({
             messages: [
                 { role: "system", content: SYSTEM_PROMPT },
-                ...history.slice(-8) // Son 8 mesajı gönder
+                ...history.slice(-8)
             ],
-            model: "llama-4-maverick-17b-128e-instruct", 
-            temperature: 0.7,
-            max_tokens: 1024,
+            model: "llama-3.3-70b-versatile",
+            temperature: 0.6,
+            max_tokens: 800,
         });
 
         let aiResponse = completion.choices[0].message.content;
 
-        // Her ihtimale karşı temizlik (Maverick'te pek gerekmez ama sağlam olsun)
+        // Her ihtimale karşı etiket temizliği
         aiResponse = aiResponse.replace(/<(think|thought|reasoning)>[\s\S]*?<\/\1>/gi, '');
         aiResponse = aiResponse.replace(/<(think|thought|reasoning)>[\s\S]*/gi, '');
         aiResponse = aiResponse.trim();
 
         if (aiResponse) {
-            // Asistan cevabını hafızaya ekle
             history.push({ role: "assistant", content: aiResponse });
             
-            // 20 mesajı geçerse en eski ikiliyi sil
             if (history.length > 20) {
                 history.splice(0, 2);
             }
@@ -67,17 +63,25 @@ bot.on('text', async (ctx) => {
             await ctx.reply(aiResponse);
         }
     } catch (error) {
-        console.error("HATA:", error.message);
+        console.error("HATA DETAYI:", error.message);
         
         if (error.message.includes("429")) {
-            await ctx.reply("Çok hızlısın kral, Maverick bile yetişemedi! Biraz bekle. 🐋");
+            await ctx.reply("Çok hızlısın kral, limitler zorlanıyor. Biraz bekle düzelecek! 🐋");
         } else {
-            await ctx.reply("Bir hata oldu kral, /reset yazıp temiz bir sayfa açalım mı?");
+            await ctx.reply("Ufak bir teknik aksaklık oldu kral, /reset yazıp tekrar deneyelim mi?");
         }
     }
 });
 
-bot.launch().then(() => console.log("Beluga AI (Maverick Edition) yayında! 🐋🚀"));
+// Railway'deki çakışmaları (409) önlemek için botu güvenli başlatma
+bot.launch().then(() => console.log("Beluga AI (Llama 3.3 Edition) başarıyla başlatıldı! 🐋🚀"))
+    .catch((err) => {
+        if (err.message.includes('409')) {
+            console.log("Bot zaten başka bir yerde açık (409 Conflict).");
+        } else {
+            console.error("Bot başlatılamadı:", err);
+        }
+    });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
