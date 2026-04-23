@@ -5,7 +5,7 @@ const Groq = require('groq-sdk');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Kullanıcı bazlı hafıza için Map
+// Kullanıcı bazlı hafıza
 const userHistory = new Map();
 
 const SYSTEM_PROMPT = `Sen Beluga AI'sın. Türkçe konuşan samimi bir asistansın.
@@ -26,7 +26,6 @@ bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const userMessage = ctx.message.text;
 
-    // Kullanıcının geçmişini al veya yeni oluştur
     if (!userHistory.has(userId)) {
         userHistory.set(userId, []);
     }
@@ -35,10 +34,8 @@ bot.on('text', async (ctx) => {
     try {
         await ctx.sendChatAction('typing');
 
-        // Mevcut mesajı geçmişe ekle
         history.push({ role: "user", content: userMessage });
 
-        // Groq'a gönderilecek mesaj listesini hazırla (Sistem + Son 8 mesaj)
         const messagesToSend = [
             { role: "system", content: SYSTEM_PROMPT },
             ...history.slice(-8)
@@ -47,19 +44,18 @@ bot.on('text', async (ctx) => {
         const completion = await groq.chat.completions.create({
             messages: messagesToSend,
             model: "qwen/qwen3-32b",
-            temperature: 0.2,
+            temperature: 0.6, // Döngüye girmemesi için biraz yükselttik
+            max_tokens: 1000, // API'nin şişmesini engellemek için sınır koyduk
         });
 
         let aiResponse = completion.choices[0].message.content;
 
-        // <think> etiketlerini temizle
+        // <think> etiketlerini ve içindekileri temizle
         aiResponse = aiResponse.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
         if (aiResponse) {
-            // Asistan cevabını geçmişe ekle
             history.push({ role: "assistant", content: aiResponse });
             
-            // 20 mesaj limit kontrolü: Geçerse en eski 2 mesajı sil
             if (history.length > 20) {
                 history.splice(0, 2);
             }
@@ -67,12 +63,18 @@ bot.on('text', async (ctx) => {
             await ctx.reply(aiResponse);
         }
     } catch (error) {
-        console.error("Groq Hatası:", error);
-        await ctx.reply("Bir hata oluştu kral, hafıza sistemi veya API şu an yoğun olabilir.");
+        // Hatayı terminalde detaylı görmek için:
+        console.error("DETAYLI HATA:", error.message);
+        
+        if (error.message.includes("rate_limit")) {
+            await ctx.reply("Çok hızlısın kral, biraz bekle limit doldu. 🐋");
+        } else {
+            await ctx.reply("Bir hata oluştu kral, hafızayı /reset ile sıfırlayıp tekrar dene.");
+        }
     }
 });
 
-bot.launch().then(() => console.log("Beluga AI (Hafızalı) yayında! 🐋"));
+bot.launch().then(() => console.log("Beluga AI (Hafızalı & Optimize) yayında! 🐋"));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
