@@ -1,12 +1,11 @@
 {
-  "name": "beluga-telegram-bot",
+  "name": "beluga-ai-bot",
   "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "start": "node bot.js"
-  },
+  "description": "Beluga AI Telegram Bot",
+  "main": "bot.js",
   "dependencies": {
     "telegraf": "^4.16.3",
-    "groq-sdk": "^0.5.0"
+    "groq-sdk": "^0.3.3",
+    "dotenv": "^16.4.5"
   }
 }
